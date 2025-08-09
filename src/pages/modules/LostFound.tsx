@@ -1,8 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { Search, Plus, Phone, Mail, User, MapPin, Calendar } from 'lucide-react';
-import { db } from '../../lib/firebase';
-import { collection, addDoc, onSnapshot, query, orderBy, updateDoc, doc } from 'firebase/firestore';
+import { readJsonFromStorage, writeJsonToStorage, STORAGE_KEYS } from '../../utils/storage';
 
 interface LostFoundItem {
   id: string;
@@ -33,19 +32,53 @@ const LostFound: React.FC = () => {
   });
 
   useEffect(() => {
-    const q = query(collection(db, 'lostFoundItems'), orderBy('createdAt', 'desc'));
-    const unsub = onSnapshot(q, (snapshot) => {
-      const list: LostFoundItem[] = snapshot.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<LostFoundItem, 'id'>) }));
-      setItems(list);
-    });
-    return () => unsub();
+    const stored = readJsonFromStorage<LostFoundItem[] | null>(STORAGE_KEYS.lostFoundItems, null);
+    if (stored && Array.isArray(stored) && stored.length > 0) {
+      setItems(stored);
+      return;
+    }
+    // Seed with some dummy items
+    const defaults: LostFoundItem[] = [
+      {
+        id: 'lf1',
+        title: 'Lost: Black Wallet',
+        description: 'Black leather wallet with college ID and some cash. Lost near mess hall.',
+        category: 'lost',
+        location: 'Mess Hall',
+        posterId: 'student_03',
+        posterName: 'student_03',
+        posterEmail: 'student_03@hostel.edu',
+        posterPhone: '99999-33333',
+        status: 'active',
+        createdAt: new Date(Date.now() - 1000 * 60 * 60 * 30).toISOString(),
+      },
+      {
+        id: 'lf2',
+        title: 'Found: USB Drive 32GB',
+        description: 'Sandisk 32GB pendrive found in library computer area. Describe contents to claim.',
+        category: 'found',
+        location: 'Library',
+        posterId: 'student_04',
+        posterName: 'student_04',
+        posterEmail: 'student_04@hostel.edu',
+        posterPhone: '99999-44444',
+        status: 'active',
+        createdAt: new Date(Date.now() - 1000 * 60 * 60 * 50).toISOString(),
+      },
+    ];
+    setItems(defaults);
+    writeJsonToStorage(STORAGE_KEYS.lostFoundItems, defaults);
   }, []);
 
-  type NewLostFoundItem = Omit<LostFoundItem, 'id'>;
+  const saveItems = (updatedItems: LostFoundItem[]) => {
+    setItems(updatedItems);
+    writeJsonToStorage(STORAGE_KEYS.lostFoundItems, updatedItems);
+  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const newItem: NewLostFoundItem = {
+    const newItem: LostFoundItem = {
+      id: Date.now().toString(),
       title: formData.title,
       description: formData.description,
       category: formData.category,
@@ -57,16 +90,20 @@ const LostFound: React.FC = () => {
       status: 'active',
       createdAt: new Date().toISOString()
     };
-    addDoc(collection(db, 'lostFoundItems'), newItem);
+
+    const updatedItems = [...items, newItem];
+    saveItems(updatedItems);
     setFormData({ title: '', description: '', category: 'lost', location: '', phone: '' });
     setShowForm(false);
   };
 
   const markAsFound = (itemId: string) => {
-    const current = items.find((i) => i.id === itemId);
-    if (!current) return;
-    const newStatus = current.category === 'lost' ? 'returned' : 'claimed';
-    updateDoc(doc(db, 'lostFoundItems', itemId), { status: newStatus });
+    const updatedItems = items.map(item =>
+      item.id === itemId
+        ? { ...item, status: item.category === 'lost' ? 'returned' as const : 'claimed' as const }
+        : item
+    );
+    saveItems(updatedItems);
   };
 
   const filteredItems = items.filter(item => {

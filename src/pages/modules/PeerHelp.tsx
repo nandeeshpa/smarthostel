@@ -1,8 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { HelpCircle, Plus, Phone, Mail, User, CheckCircle2, Clock } from 'lucide-react';
-import { db } from '../../lib/firebase';
-import { collection, addDoc, onSnapshot, query, orderBy, updateDoc, doc } from 'firebase/firestore';
+import { readJsonFromStorage, writeJsonToStorage, STORAGE_KEYS } from '../../utils/storage';
 
 interface HelpRequest {
   id: string;
@@ -32,19 +31,51 @@ const PeerHelp: React.FC = () => {
   });
 
   useEffect(() => {
-    const q = query(collection(db, 'helpRequests'), orderBy('createdAt', 'desc'));
-    const unsub = onSnapshot(q, (snapshot) => {
-      const list: HelpRequest[] = snapshot.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<HelpRequest, 'id'>) }));
-      setRequests(list);
-    });
-    return () => unsub();
+    const stored = readJsonFromStorage<HelpRequest[] | null>(STORAGE_KEYS.helpRequests, null);
+    if (stored && Array.isArray(stored) && stored.length > 0) {
+      setRequests(stored);
+      return;
+    }
+    // Seed with some dummy requests
+    const defaults: HelpRequest[] = [
+      {
+        id: 'h1',
+        title: 'Need help with Math Assignment',
+        description: 'Struggling with calculus problems due tomorrow. Anyone good at integrals?',
+        category: 'academic',
+        requesterId: 'student_01',
+        requesterName: 'student_01',
+        requesterEmail: 'student_01@hostel.edu',
+        requesterPhone: '99999-11111',
+        status: 'open',
+        createdAt: new Date(Date.now() - 1000 * 60 * 60 * 5).toISOString(),
+      },
+      {
+        id: 'h2',
+        title: 'Looking for a laptop charger (Type-C)',
+        description: 'Forgot my charger at home. Need to borrow for a few hours this evening.',
+        category: 'personal',
+        requesterId: 'student_02',
+        requesterName: 'student_02',
+        requesterEmail: 'student_02@hostel.edu',
+        requesterPhone: '99999-22222',
+        status: 'open',
+        createdAt: new Date(Date.now() - 1000 * 60 * 60 * 12).toISOString(),
+      },
+    ];
+    setRequests(defaults);
+    writeJsonToStorage(STORAGE_KEYS.helpRequests, defaults);
   }, []);
 
-  type NewHelpRequest = Omit<HelpRequest, 'id'>;
+  const saveRequests = (updatedRequests: HelpRequest[]) => {
+    setRequests(updatedRequests);
+    writeJsonToStorage(STORAGE_KEYS.helpRequests, updatedRequests);
+  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const newRequest: NewHelpRequest = {
+    const newRequest: HelpRequest = {
+      id: Date.now().toString(),
       title: formData.title,
       description: formData.description,
       category: formData.category,
@@ -55,19 +86,27 @@ const PeerHelp: React.FC = () => {
       status: 'open',
       createdAt: new Date().toISOString()
     };
-    addDoc(collection(db, 'helpRequests'), newRequest);
+
+    const updatedRequests = [...requests, newRequest];
+    saveRequests(updatedRequests);
     setFormData({ title: '', description: '', category: 'academic', phone: '' });
     setShowForm(false);
   };
 
   const offerHelp = (requestId: string) => {
-    const current = requests.find((r) => r.id === requestId);
-    if (!current) return;
-    updateDoc(doc(db, 'helpRequests', requestId), { status: 'helping', helperId: user?.id, helperName: user?.id });
+    const updatedRequests = requests.map(req =>
+      req.id === requestId
+        ? { ...req, status: 'helping' as const, helperId: user?.id, helperName: user?.id }
+        : req
+    );
+    saveRequests(updatedRequests);
   };
 
   const markSolved = (requestId: string) => {
-    updateDoc(doc(db, 'helpRequests', requestId), { status: 'solved' });
+    const updatedRequests = requests.map(req =>
+      req.id === requestId ? { ...req, status: 'solved' as const } : req
+    );
+    saveRequests(updatedRequests);
   };
 
   const getStatusColor = (status: string) => {

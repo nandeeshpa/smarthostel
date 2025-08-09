@@ -1,8 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { Clipboard, Plus, Pin, Calendar, User } from 'lucide-react';
-import { db } from '../../lib/firebase';
-import { collection, addDoc, onSnapshot, query, orderBy, updateDoc, doc } from 'firebase/firestore';
+import { readJsonFromStorage, writeJsonToStorage, STORAGE_KEYS } from '../../utils/storage';
 
 interface Notice {
   id: string;
@@ -28,22 +27,48 @@ const NoticeBoard: React.FC = () => {
   });
 
   useEffect(() => {
-    const q = query(collection(db, 'notices'), orderBy('createdAt', 'desc'));
-    const unsub = onSnapshot(q, (snapshot) => {
-      const list: Notice[] = snapshot.docs.map((d) => ({
-        id: d.id,
-        ...(d.data() as Omit<Notice, 'id'>),
-      }));
-      setNotices(list);
-    });
-    return () => unsub();
+    const storedNotices = readJsonFromStorage<Notice[] | null>(STORAGE_KEYS.notices, null);
+    if (storedNotices && Array.isArray(storedNotices)) {
+      setNotices(storedNotices);
+      return;
+    }
+    const defaultNotices: Notice[] = [
+      {
+        id: '1',
+        title: 'Mess Timing Changes',
+        content: 'Due to kitchen maintenance, dinner will be served from 7:30 PM to 9:30 PM this week.',
+        author: 'Warden',
+        authorRole: 'warden',
+        createdAt: new Date().toISOString(),
+        priority: 'high',
+        category: 'mess',
+        pinned: true
+      },
+      {
+        id: '2',
+        title: 'WiFi Maintenance',
+        content: 'WiFi will be down for maintenance on Sunday from 2:00 AM to 4:00 AM.',
+        author: 'IT Team',
+        authorRole: 'warden',
+        createdAt: new Date(Date.now() - 86400000).toISOString(),
+        priority: 'medium',
+        category: 'technical',
+        pinned: false
+      }
+    ];
+    setNotices(defaultNotices);
+    writeJsonToStorage(STORAGE_KEYS.notices, defaultNotices);
   }, []);
 
-  type NewNotice = Omit<Notice, 'id'>;
+  const saveNotices = (updatedNotices: Notice[]) => {
+    setNotices(updatedNotices);
+    writeJsonToStorage(STORAGE_KEYS.notices, updatedNotices);
+  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const newNotice: NewNotice = {
+    const newNotice: Notice = {
+      id: Date.now().toString(),
       title: formData.title,
       content: formData.content,
       author: user?.id || 'Unknown',
@@ -54,15 +79,17 @@ const NoticeBoard: React.FC = () => {
       pinned: false
     };
 
-    addDoc(collection(db, 'notices'), newNotice);
+    const updatedNotices = [newNotice, ...notices];
+    saveNotices(updatedNotices);
     setFormData({ title: '', content: '', category: 'general', priority: 'medium' });
     setShowForm(false);
   };
 
   const togglePin = (noticeId: string) => {
-    const current = notices.find((n) => n.id === noticeId);
-    if (!current) return;
-    updateDoc(doc(db, 'notices', noticeId), { pinned: !current.pinned });
+    const updatedNotices = notices.map(notice =>
+      notice.id === noticeId ? { ...notice, pinned: !notice.pinned } : notice
+    );
+    saveNotices(updatedNotices);
   };
 
   const sortedNotices = [...notices].sort((a, b) => {

@@ -1,8 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { Calendar, Clock, CheckCircle, XCircle, AlertCircle, Plus } from 'lucide-react';
-import { db } from '../../lib/firebase';
-import { collection, addDoc, onSnapshot, query, where, updateDoc, doc, orderBy } from 'firebase/firestore';
+import { readJsonFromStorage, writeJsonToStorage, STORAGE_KEYS } from '../../utils/storage';
 
 interface Leave {
   id: string;
@@ -26,41 +25,44 @@ const LeaveManagement: React.FC = () => {
   });
 
   useEffect(() => {
-    // Wardens see all leaves; students see own
-    const baseQuery = user?.role === 'student'
-      ? query(collection(db, 'leaves'), where('studentId', '==', user.id), orderBy('createdAt', 'desc'))
-      : query(collection(db, 'leaves'), orderBy('createdAt', 'desc'));
-    const unsub = onSnapshot(baseQuery, (snapshot) => {
-      const list: Leave[] = snapshot.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<Leave, 'id'>) }));
-      setLeaves(list);
-    });
-    return () => unsub();
-  }, [user?.id, user?.role]);
+    const storedLeaves = readJsonFromStorage<Leave[]>(STORAGE_KEYS.leaves, []);
+    setLeaves(storedLeaves);
+  }, []);
 
-  type NewLeave = Omit<Leave, 'id' | 'appliedDate'> & { createdAt: string; appliedDate: string };
+  const saveLeaves = (updatedLeaves: Leave[]) => {
+    setLeaves(updatedLeaves);
+    writeJsonToStorage(STORAGE_KEYS.leaves, updatedLeaves);
+  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const newLeave: NewLeave = {
+    const newLeave: Leave = {
+      id: Date.now().toString(),
       reason: formData.reason,
       startDate: formData.startDate,
       endDate: formData.endDate,
       status: 'pending',
       appliedDate: new Date().toISOString().split('T')[0],
       studentId: user?.id || '',
-      studentName: user?.id || '',
-      createdAt: new Date().toISOString()
+      studentName: user?.id || ''
     };
-    addDoc(collection(db, 'leaves'), newLeave);
+    
+    const updatedLeaves = [...leaves, newLeave];
+    saveLeaves(updatedLeaves);
     setFormData({ reason: '', startDate: '', endDate: '' });
     setShowForm(false);
   };
 
   const updateLeaveStatus = (leaveId: string, status: 'approved' | 'rejected') => {
-    updateDoc(doc(db, 'leaves', leaveId), { status });
+    const updatedLeaves = leaves.map(leave =>
+      leave.id === leaveId ? { ...leave, status } : leave
+    );
+    saveLeaves(updatedLeaves);
   };
 
-  const filteredLeaves = leaves;
+  const filteredLeaves = user?.role === 'student' 
+    ? leaves.filter(leave => leave.studentId === user.id)
+    : leaves;
 
   const getStatusIcon = (status: string) => {
     switch (status) {
